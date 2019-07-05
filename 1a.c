@@ -3,21 +3,28 @@
 #include <math.h>
 #include <time.h>
 
-float set_box(float *r, int N, float L);
-float set_v(float *v, int N, float T);
-float Gaussiana(float nu, float sigma);
-float fuerza(int N, int L, float *r, float *rij, float *Fij, float *Fr);
+double set_box(double *r, int N, double L);
+double set_v(double *v, int N, double T);
+double Gaussiana(double nu, double sigma);
+double fuerza(int N, int L, double *r, double *rij, double *rij2, double *Fij, double *Vij, double *Fr);
+int posiciones(int N, double *r, double *v, double *Fr);
+double velocity_verlet(int N, double *v, double *Fr, double *Frv);
 
 int main(int argc, char const *argv[]) {
-  int N=8, i;
-  float L=4, T=6;
-  float *r, *v, *rij, *rij2, *Fij, *Vij, *Fr;
+  int N=8, i, j, it=3;
+  double L=4.0, T=6.0, Vs=0.0, E_c=0.0;
+  double *r, *v, *rij, *rij2, *Fij, *Vij, *Fr, *Frv;
+  FILE *video, *energias;
 
   srand(time(NULL));
 
-  r = malloc(3*N*sizeof(float));
-  v = malloc((3*N+3)*sizeof(float));
-  Fr = malloc(3*N*sizeof(float));
+  r = malloc(3*N*sizeof(double));
+  v = malloc((3*N+3)*sizeof(double));
+  Fr = malloc(3*N*sizeof(double));
+  Frv = malloc(3*N*sizeof(double));
+
+  video = fopen("./video.lammpstrj", "a");
+  energias = fopen("./energias", "a");
 
   for(i=0; i<3*N; i++) {
     *(Fr + i) = 0.0;
@@ -25,25 +32,25 @@ int main(int argc, char const *argv[]) {
 
 //############Tabla para interpolar###################//
 
-  rij = malloc(100000*sizeof(float));
-  rij2 = malloc(100000*sizeof(float));
-  Fij = malloc(100000*sizeof(float));
-  Vij = malloc(100000*sizeof(float));
+  rij = malloc(100000*sizeof(double));
+  rij2 = malloc(100000*sizeof(double));
+  Fij = malloc(100000*sizeof(double));
+  Vij = malloc(100000*sizeof(double));
 
-  for(i=0; i<100000; i++) {
-    *(rij + i) = 0.01 + (2.5/99999) * i;
+  for(i=0; i<99999; i++) {
+    *(rij + i) = (2.5/99999.0) + (2.5/99999.0) * i;
   }
 
-  for(i=0; i<100000; i++) {
+  for(i=0; i<99999; i++) {
     *(rij2 + i) = *(rij + i) * *(rij + i);
   }
 
-  for(i=0; i<100000; i++) {
-    *(Fij + i) = 24 * (2/ (*(rij+i) * pow(*(rij2 + i),6))  - 1/ (*(rij+i) * pow(*(rij2 + i),3)));
+  for(i=0; i<99999; i++) {
+    *(Fij + i) = 24.0 * (2.0/ (*(rij+i) * pow(*(rij2 + i),6))  - 1.0/ (*(rij+i) * pow(*(rij2 + i),3)));
   }
 
-  for(i=0; i<100000; i++) {
-    *(Vij + i) = 4 * (1/(pow(*(rij2 + i),6))  - 1/ (pow(*(rij2 + i),3)));
+  for(i=0; i<99999; i++) {
+    *(Vij + i) = 4.0 * (1.0/(pow(*(rij2 + i),6))  - 1.0/ (pow(*(rij2 + i),3)));
   }
 
   for(i=0;i<3*N;i++) {
@@ -54,32 +61,55 @@ int main(int argc, char const *argv[]) {
 
 
   set_box(r,N,L);   //Coloca las particulas en su posición inicial.
-  set_v(v,N,T);     //Crea las velocidades iniciales.
+  Vs = fuerza(N, L, r, rij, rij2, Fij, Vij, Fr);  //Calculo de Vs.
+  E_c = set_v(v,N,T);     //Crea las velocidades iniciales.
 
-  printf("Imprimo los rp's y luego las veces que sumo F's\n");
-  fuerza(N, L, r, rij2, Fij, Fr);    //Calcula las fuerzas.
+  fprintf(video, "ITEM: TIMESTEP\n");
+  fprintf(video, "0\n");
+  fprintf(video, "ITEM: NUMBER OF ATOMS\n");
+  fprintf(video, "%i\n", N);
+  fprintf(video, "ITEM: BOX BOUNDS pp pp pp\n");
+  fprintf(video, "0 10.000000\n");
+  fprintf(video, "0 10.000000\n");
+  fprintf(video, "0 10.000000\n");
+  fprintf(video, "ITEM: ATOMS id x y z vx vy vz \n");
 
-  printf("\n");
+  fprintf(energias, "%i %f %f %f\n", 0, Vs, E_c, Vs+E_c);
 
-
-
-  //x(t+h) = x(t) + v(t)*h + 1/2 * F(t)/m * h*h
-
-
-                    //Calcula las nuevas posiciones         <-----------
-                    //Calculo de fuerzas.                              |
-                    //Calcula las nuevas velocidades                  --
-  printf("Fuerza final\n");
-  for(i=0; i<3*N;i++) {
-    printf("%f\n", *(Fr+i));//, *(Fr+i));
+  for(i=0; i<N; i++) {
+    fprintf(video, "%i %f %f %f %f %f %f\n", i, *(r+3*i), *(r+3*i+1), *(r+3*i+2), *(v+3*i), *(v+3*i+1), *(v+3*i+2));
   }
 
-  printf("\n");
-  printf("Posiciones partículas\n");
-  for(i=0; i<N;i++) {
-    printf("%f %f %f\n", *(r+3*i), *(r+3*i+1), *(r+3*i+2));
+  for(i=0; i<it; i++) {
+    fprintf(video, "ITEM: TIMESTEP\n");
+    fprintf(video, "%i\n", i+1);
+    fprintf(video, "ITEM: NUMBER OF ATOMS\n");
+    fprintf(video, "%i\n", N);
+    fprintf(video, "ITEM: BOX BOUNDS pp pp pp\n");
+    fprintf(video, "0 10.000000\n");
+    fprintf(video, "0 10.000000\n");
+    fprintf(video, "0 10.000000\n");
+    fprintf(video, "ITEM: ATOMS id x y z vx vy vz\n");
+
+
+    posiciones(N, r, v, Fr);         //Calcula las nuevas posiciones  <----
+    for(j=0; j<3*N; j++) {                                              //|
+      *(Frv + j) = *(Fr + j);        //Fuerza anterior.                 //|
+    }                                                                   //|
+    Vs = fuerza(N, L, r, rij, rij2, Fij, Vij, Fr);  //Calculo de fuerzas.                |
+    E_c = velocity_verlet(N, v, Fr, Frv);      //Calcula las nuevas velocidades   ---
+
+
+    for(j=0; j<N; j++) {
+      fprintf(video, "%i %f %f %f %f %f %f\n", j, *(r+3*j), *(r+3*j+1), *(r+3*j+2), *(v+3*j), *(v+3*j+1), *(v+3*j+2));
+    }
+
+    fprintf(energias, "%i %f %f %f\n", i+1, Vs, E_c, Vs+E_c );
+
   }
 
+  fclose(video);
+  fclose(energias);
 
   free(r);
   free(rij);
@@ -88,13 +118,17 @@ int main(int argc, char const *argv[]) {
   free(Fij);
   free(Vij);
   free(Fr);
+  free(Frv);
 
   return 0;
 }
 
-float set_box(float *r, int N, float L) {
+
+//Ecuaciones Secundarias:
+//##########################################################//
+double set_box(double *r, int N, double L) {
   int n = cbrt(N), i=0, x, y, z;
-  float dL=L/n;
+  double dL=L/n;
 
   for(x=0; x<n; x++) {
     for(y=0; y<n; y++) {
@@ -109,34 +143,39 @@ float set_box(float *r, int N, float L) {
       }
     }
   }
+
   return 0;
 }
+//##########################################################//
 
-float Gaussiana(float nu, float sigma) {
+//##########################################################//
+double Gaussiana(double nu, double sigma) {
   int n = 10, i;
-  float z = 0;
+  double z = 0;
 
   for(i=0; i<n; i++) {
-    z += (float)rand()/(float)RAND_MAX;
+    z += (double)rand()/(double)RAND_MAX;
   }
 
   z = sqrt(12*n)*(z/n - 0.5);
 
   return z*sigma+nu;
 }
+//##########################################################//
 
-float set_v(float *v, int N, float T) {
+//##########################################################//
+double set_v(double *v, int N, double T) {
   int i,j;
-  float sigma = sqrt(T);
-  float *VCM;
+  double sigma = sqrt(T), E_c=0.0;
+  double *VCM;
 
-  VCM = malloc(3*sizeof(float));
+  VCM = malloc(3*sizeof(double));
 
   *(VCM) = 0;
   *(VCM + 1) = 0;
   *(VCM + 2) = 0;
 
-  for(i=0; i<3; i++) {
+  for(i=0; i<3*N; i++) {
     *(v+i) = Gaussiana(0.0,sigma);
   }
 
@@ -152,85 +191,115 @@ float set_v(float *v, int N, float T) {
     }
   }
 
-  return 0;
+  for(i=0; i<N; i++) {
+    E_c += 0.5 * (*(v+3*i) * *(v+3*i) + *(v+3*i+1) * *(v+3*i+1) + *(v+3*i+2) * *(v+3*i+2));
+  }
 
+  return E_c;
 }
+//##########################################################//
 
-float fuerza(int N, int L, float *r, float *rij2, float *Fij, float *Fr) {
-  int i, j, k, *cont;
-  float rp2, rpx2, rpy2, rpz2, ra, rb, Fa, Fb;
-
-  cont = malloc((N-1)*sizeof(int));
+//##########################################################//
+double fuerza(int N, int L, double *r, double *rij, double *rij2, double *Fij, double *Vij, double *Fr) {
+  int i, j, k;
+  double rp, rp2, rpx, rpy, rpz, ra, rb, Fa, Fb, Fs, Va, Vb, Vs=0.0, dr2=pow(2.5,2)*pow(99999,2);
 
   for(i=0; i<N-1; i++) {
-    *(cont+i)=0;
     for(j=i+1; j<N; j++) {
-      if(i!=j) {
-          rpx2 = pow(*(r + 3*i) - *(r + 3*j),2);
-          rpy2 = pow(*(r + 3*i+1) - *(r + 3*j+1),2);
-          rpz2 = pow(*(r + 3*i+2) - *(r + 3*j+2),2);
 
-          rp2 = rpx2 + rpy2 + rpz2;
+        rpx = *(r + 3*i) - *(r + 3*j);
+        rpy = *(r + 3*i+1) - *(r + 3*j+1);
+        rpz = *(r + 3*i+2) - *(r + 3*j+2);
 
-          printf("%f %f %f\n", rpx2, rpy2, rpz2);
-          printf("%f\n", rp2);
-          printf("\n");
+        rp = sqrt(rpx*rpx + rpy*rpy + rpz*rpz);
+        rp2 = sqrt(rpx*rpx + rpy*rpy + rpz*rpz);
 
+        if(rp < L) {
+          if(rp < -L/2) {
+            rp2 = (rpx+L)*(rpx+L) + (rpy+L)*(rpy+L) + (rpz+L)*(rpz+L);
 
-          if(rp2 < L*L/2) {
-            *(cont+i)+=1;
-            for(k=0; k<100000; k++) {
-              if(rpx2>=*(rij2+k)) {
-                ra = *(rij2+k-1);
-                rb = *(rij2+k);
-                Fa = *(Fij + k-1);
-                Fb = *(Fij + k);
+            k = (int)((rp2-dr2)/dr2);
+            ra = *(rij2 + k-1);
+            rb = *(rij2 + k);
+            Fa = *(Fij + k-1);
+            Fb = *(Fij + k);
+            Va = *(Vij + k-1);
+            Vb = *(Vij + k);
 
-                *(Fr + 3*i) += Fa + (rpx2 - ra) * (Fb - Fa)/(rb - ra);
+            Fs = Fa + (sqrt(rp2) - ra) * (Fb - Fa)/(rb - ra);
+            Vs += Va + (sqrt(rp2) - ra) * (Vb - Va)/(rb - ra);
 
-                break;
-              }
+            *(Fr + 3*i) += Fs * (rpx+L)/rp2;
+            *(Fr + 3*i+1) += Fs * (rpy+L)/rp2;
+            *(Fr + 3*i+2) += Fs * (rpz+L)/rp2;
+
+            //printf("rpx: %f rij: %fn", rpx, *(rij + k));
+
+            *(Fr + 3*j) -= Fs * rpx/rp2;
+            *(Fr + 3*j+1) -= Fs * rpy/rp2;
+            *(Fr + 3*j+2) -= Fs * rpz/rp2;
             }
-          }
 
-          if(rpy2 < L*L/4) {
-            for(k=0; k<100000; k++) {
-              if(rpy2>=*(rij2+k)) {
-                ra = *(rij2+k-1);
-                rb = *(rij2+k);
-                Fa = *(Fij + k-1);
-                Fb = *(Fij + k);
+          if ((rp > L/2)) {
+            rp2 = (rpx-L)*(rpx-L) + (rpy-L)*(rpy-L) + (rpz-L)*(rpz-L);
 
-                *(Fr + 3*i+1) += Fa + (rpy2 - ra) * (Fb - Fa)/(rb - ra);
+            k = (int)((rp2-dr2)/dr2);
+            ra = *(rij2 + k-1);
+            rb = *(rij2 + k);
+            Fa = *(Fij + k-1);
+            Fb = *(Fij + k);
+            Va = *(Vij + k-1);
+            Vb = *(Vij + k);
 
-                break;
-              }
-            }
-          }
 
-          if(rpz2 < L*L/4) {
-            for(k=0; k<100000; k++) {
-              if(rpz2>=*(rij2+k)) {
-                ra = *(rij2+k-1);
-                rb = *(rij2+k);
-                Fa = *(Fij + k-1);
-                Fb = *(Fij + k);
+            Fs = Fa + (sqrt(rp2) - ra) * (Fb - Fa)/(rb - ra);
+            Vs += Va + (sqrt(rp2) - ra) * (Vb - Va)/(rb - ra);
 
-                *(Fr + 3*i+2) += Fa + (rpz2 - ra) * (Fb - Fa)/(rb - ra);
+            *(Fr + 3*i) += Fs * (rpx - L)/rp2;
+            *(Fr + 3*i+1) += Fs * (rpy - L)/rp2;
+            *(Fr + 3*i+2) += Fs * (rpz - L)/rp2;
 
-                break;
-              }
+            *(Fr + 3*j) -= Fs * (rpx - L)/rp2;
+            *(Fr + 3*j+1) -= Fs * (rpy - L)/rp2;
+            *(Fr + 3*j+2) -= Fs * (rpz - L)/rp2;
             }
           }
       }
     }
-  }
 
-  printf("\n");
+  return Vs;
+}
+//##########################################################//
 
-  for(i=0; i<N-1; i++) {
-    printf("%i\n", *(cont+i));
+//##########################################################//
+int posiciones(int N, double *r, double *v, double *Fr) {
+  int i;
+  double h=0.01;
+
+  for(i=0; i<N; i++) {
+    *(r+3*i) = *(r+3*i) + *(v+3*i) * h + (1/2) * *(Fr+3*i) * h*h;
+    *(r+3*i+1) = *(r+3*i+1) + *(v+3*i+1) * h + (1/2) * *(Fr+3*i+1) * h*h;
+    *(r+3*i+2) = *(r+3*i+2) + *(v+3*i+2) * h + (1/2) * *(Fr+3*i+2) * h*h;
   }
 
   return 0;
 }
+//##########################################################//
+
+//##########################################################//
+double velocity_verlet(int N, double *v, double *Fr, double *Frv) {
+  int i;
+  double h=0.01, E_c=0.0;
+
+  for(i=0; i<N; i++) {
+    //printf("%f %fn", *(Frv+3*i), *(Fr+3*i));
+    *(v+3*i) = *(v+3*i) + (*(Frv+3*i) + *(Fr+3*i)) * h;
+    *(v+3*i+1) = *(v+3*i+1) + (*(Frv+3*i+1) + *(Fr+3*i+1)) * h;
+    *(v+3*i+2) = *(v+3*i+2) + (*(Frv+3*i+2) + *(Fr+3*i+2)) * h;
+
+    E_c += 0.5 * (*(v+3*i) * *(v+3*i) + *(v+3*i+1) * *(v+3*i+1) + *(v+3*i+2) * *(v+3*i+2));
+  }
+
+  return E_c;
+}
+//##########################################################//
